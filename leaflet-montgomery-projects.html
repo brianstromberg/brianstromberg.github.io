@@ -14,7 +14,7 @@
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     :root {
-      --ink:     #18181a;
+      --ink:     #a4a5e7;
       --paper:   #f4f1ea;
       --card:    #edeae2;
       --muted:   #8a8880;
@@ -313,10 +313,10 @@
     </div>
     -->
 
-    <!-- Source of funds breakdown -->
+    <!-- Use of funds breakdown -->
     <div class="sidebar-section">
-      <div class="sidebar-label">Source of Funds</div>
-      <div class="pop-chart" id="source-chart"></div>
+      <div class="sidebar-label">Use of Funds</div>
+      <div class="pop-chart" id="use-chart"></div>
     </div>
 
   </aside>
@@ -426,9 +426,9 @@
       const [lat, lng] = positions[i];
       L.circleMarker([lat, lng], {
         radius:      5,
-        color:       '#1a1a18',
+        color:       '',
         weight:      1,
-        fillColor:   '#1a1a18',
+        fillColor:   '#a4a5e7',
         fillOpacity: 1,
       })
         .bindPopup(popupHtml(p), { maxWidth: 300, closeButton: true })
@@ -451,7 +451,7 @@
       totalLoan > 0 ? '$' + (totalLoan / 1e6).toFixed(0) + 'M' : '—';
 
     renderStatusChart(projects);
-    renderSourceChart(projects);
+    renderUseChart(projects);
   }
 
   // ── Sidebar charts ───────────────────────────────────────────────────────────
@@ -505,20 +505,18 @@
     renderBarChart('status-chart', items);
   }
 
-  function renderSourceChart(projects) {
+  function renderUseChart(projects) {
     const counts = new Map();
     projects.forEach(p => {
-      let src = (p.source || '').trim();
-      if (!src) src = '—';
-      // Normalize: take part before any '+' or '/' to group HIF-CIP, HIF-Rental, etc.
-      // but keep informative grouping
-      counts.set(src, (counts.get(src) || 0) + 1);
+      let use = (p.use || '').trim();
+      if (!use) use = '—';
+      counts.set(use, (counts.get(use) || 0) + 1);
     });
     const palette = ['#1a1a18','#b85c38','#2a6096','#2e8b6e','#6b4c9a','#8a8880','#c4b8a0','#a06820'];
     const items = Array.from(counts.entries()).map(([label, n], i) => ({
       label, n, color: palette[i % palette.length],
     }));
-    renderBarChart('source-chart', items);
+    renderBarChart('use-chart', items);
   }
 
   // ── Init ─────────────────────────────────────────────────────────────────────
