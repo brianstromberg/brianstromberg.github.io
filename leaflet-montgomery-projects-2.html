@@ -1,0 +1,587 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Affordable Housing Projects — Montgomery County, MD</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.bunny.net/css?family=dm-mono:400,500|fraunces:300,300i,400|alexandria:400,400i&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --ink:     #000000;
+      --paper:   #f4f1ea;
+      --card:    #edeae2;
+      --muted:   #8a8880;
+      --accent:  #b85c38;
+      --rule:    rgba(26,26,24,.12);
+      --sidebar: 300px;
+    }
+
+    html, body { width: 100%; height: 100%; background: var(--paper); font-family: 'DM Mono', monospace; color: var(--ink); }
+
+    /* ── Layout ── */
+    .shell {
+      display: grid;
+      grid-template-columns: var(--sidebar) 1fr;
+      grid-template-rows: 48px 1fr 32px;
+      grid-template-areas:
+        "header header"
+        "sidebar map"
+        "footer footer";
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    /* ── Header ── */
+    header {
+      grid-area: header;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0 20px;
+      border-bottom: 1px solid var(--rule);
+      background: var(--paper);
+      z-index: 1000;
+    }
+    .brand { font-family: 'alexandria'; text-transform: uppercase; font-weight: 300; font-size: 17px; color: var(--ink)}
+    .brand em { font-style: italic; color: var(--accent); }
+    .meta { font-size: 10px; color: var(--muted); letter-spacing: .08em; text-transform: uppercase; }
+
+    /* ── Sidebar ── */
+    aside {
+      grid-area: sidebar;
+      border-right: 1px solid var(--rule);
+      overflow-y: auto;
+      background: var(--paper);
+      scrollbar-width: none;
+      z-index: 500;
+    }
+    aside::-webkit-scrollbar { display: none; }
+
+    .sidebar-section { padding: 16px 20px; border-bottom: 1px solid var(--rule); }
+    .sidebar-label {
+      font-size: 9px; letter-spacing: .12em; text-transform: uppercase;
+      color: var(--muted); margin-bottom: 10px;
+    }
+
+    /* ── Search input ── */
+    .search-wrap { position: relative; }
+    .search-wrap input {
+      width: 100%;
+      padding: 8px 10px 8px 28px;
+      background: var(--card);
+      border: 1px solid var(--rule);
+      border-radius: 3px;
+      font-family: 'DM Mono';
+      font-size: 11px;
+      color: var(--ink);
+      outline: none;
+      transition: border-color .15s;
+    }
+    .search-wrap input:focus { border-color: var(--accent); }
+    .search-wrap input::placeholder { color: var(--muted); }
+    .search-wrap::before {
+      content: '⌕';
+      position: absolute; left: 9px; top: 50%; transform: translateY(-50%);
+      font-size: 13px; color: var(--muted); pointer-events: none;
+    }
+
+    /* ── County dropdown ── */
+    .county-results {
+      margin-top: 6px;
+      border: 1px solid var(--rule);
+      border-radius: 3px;
+      background: var(--paper);
+      overflow: hidden;
+      display: none;
+    }
+    .county-results.visible { display: block; }
+    .county-result-item {
+      padding: 8px 12px;
+      font-size: 11px;
+      cursor: pointer;
+      border-bottom: 1px solid var(--rule);
+      transition: background .1s;
+    }
+    .county-result-item:last-child { border-bottom: none; }
+    .county-result-item:hover { background: var(--card); }
+    .county-result-item.selected { color: var(--accent); background: var(--card); }
+
+    /* ── County chip ── */
+    .county-chip {
+      display: none;
+      align-items: center;
+      justify-content: space-between;
+      margin-top: 8px;
+      padding: 5px 10px;
+      background: var(--accent);
+      border-radius: 3px;
+      font-size: 10px;
+      color: var(--paper);
+      letter-spacing: .04em;
+    }
+    .county-chip.visible { display: flex; }
+    .county-chip-clear {
+      cursor: pointer; font-size: 14px; line-height: 1;
+      opacity: .7; margin-left: 8px;
+    }
+    .county-chip-clear:hover { opacity: 1; }
+
+    /* ── Stats strip ── */
+    .stats-strip {
+      display: flex; gap: 0;
+    }
+    .stat {
+      flex: 1;
+      padding: 10px 12px;
+      border-right: 1px solid var(--rule);
+    }
+    .stat:last-child { border-right: none; }
+    .stat-value { font-size: 16px; font-family: 'Fraunces', serif; font-weight: 300; color: var(--ink); }
+    .stat-label { font-size: 8px; color: var(--muted); letter-spacing: .08em; text-transform: uppercase; margin-top: 2px; }
+
+    /* ── Map ── */
+    #map { grid-area: map; width: 100%; height: 100%; }
+
+    /* ── Loading overlay ── */
+    #loading {
+      position: absolute;
+      inset: 48px 0 32px var(--sidebar);
+      background: var(--paper);
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      gap: 12px; z-index: 2000;
+      pointer-events: none;
+      transition: opacity .4s ease;
+    }
+    #loading.hidden { opacity: 0; }
+    .spinner {
+      width: 20px; height: 20px;
+      border: 2px solid var(--rule);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin .7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .loading-label { font-size: 10px; color: var(--muted); letter-spacing: .1em; text-transform: uppercase; }
+
+    /* ── Error banner ── */
+    #error-banner {
+      display: none;
+      position: absolute;
+      top: 60px; left: calc(var(--sidebar) + 20px);
+      background: var(--ink); color: var(--paper);
+      padding: 8px 16px; font-size: 10px; letter-spacing: .06em;
+      border-radius: 3px; z-index: 3000;
+    }
+
+    /* ── Marker dot — color set inline per feature ── */
+    .dot-marker { transition: transform .12s ease; }
+    .dot-marker:hover { transform: scale(1.6); }
+
+    /* ── Popup ── */
+    .leaflet-popup-content-wrapper {
+      background: var(--paper) !important;
+      border: 1px solid var(--rule) !important;
+      border-radius: 4px !important;
+      box-shadow: 0 4px 24px rgba(26,26,24,.12) !important;
+      padding: 0 !important;
+    }
+    .leaflet-popup-tip-container { display: none; }
+    .leaflet-popup-close-button { top: 8px !important; right: 8px !important; color: var(--muted) !important; font-size: 14px !important; }
+    .popup-inner { padding: 14px 18px 12px; min-width: 200px; max-width: 320px; }
+    .popup-name {
+      font-family: 'Fraunces', serif; font-size: 22px; font-weight: 400;
+      color: var(--ink); margin-bottom: 6px; padding-right: 16px; line-height: 1.3;
+    }
+    .popup-row {
+      display: grid;
+      grid-template-columns: 100px 1fr;
+      font-size: 10px; color: var(--muted); letter-spacing: .04em;
+      padding: 3px 0; border-bottom: 1px solid var(--rule);
+    }
+    .popup-row:last-of-type { border-bottom: none; }
+    .popup-row span:last-child { color: var(--ink); font-weight: 500; padding-left:8px}
+    .popup-tags { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 8px; }
+    .popup-tag {
+      display: inline-block; padding: 2px 6px;
+      background: var(--card); border: 1px solid var(--rule);
+      border-radius: 2px; font-size: 8px; letter-spacing: .08em;
+      text-transform: uppercase; color: var(--muted);
+    }
+    .popup-tag.accent { background: var(--accent); border-color: var(--accent); color: var(--paper); }
+
+    /* ── Leaflet chrome ── */
+    .leaflet-control-attribution { display: none; }
+    .leaflet-control-zoom {
+      border: 1px solid var(--rule) !important; border-radius: 4px !important; box-shadow: none !important;
+    }
+    .leaflet-control-zoom a {
+      background: var(--paper) !important; color: var(--ink) !important;
+      border-bottom: 1px solid var(--rule) !important;
+      font-family: 'DM Mono', monospace !important;
+      font-size: 16px !important; line-height: 28px !important;
+      width: 28px !important; height: 28px !important;
+    }
+    .leaflet-control-zoom a:hover { background: var(--ink) !important; color: var(--paper) !important; }
+    .leaflet-control-zoom-out { border-bottom: none !important; }
+
+    /* ── Footer ── */
+    footer {
+      grid-area: footer;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0 20px; border-top: 1px solid var(--rule); background: var(--paper);
+    }
+    footer span { font-size: 9px; color: var(--muted); letter-spacing: .1em; text-transform: uppercase; }
+
+    /* ── Population chart ── */
+    .pop-chart { display: flex; flex-direction: column; gap: 7px; }
+    .pop-row { display: flex; flex-direction: column; gap: 3px; }
+    .pop-header { display: flex; justify-content: space-between; align-items: baseline; }
+    .pop-name { font-size: 9px; letter-spacing: .04em; color: var(--ink); text-transform: uppercase; }
+    .pop-pct  { font-size: 9px; color: var(--muted); }
+    .pop-track {
+      height: 4px; background: var(--card);
+      border-radius: 2px; overflow: hidden;
+    }
+    .pop-fill {
+      height: 100%; background: var(--accent);
+      border-radius: 2px;
+      transition: width .45s cubic-bezier(.4,0,.2,1);
+    }
+    .pop-none { font-size: 10px; color: var(--muted); font-style: italic; }
+
+    /* ── Layer toggles ── */
+    .layer-toggle {
+      display: flex; align-items: center; gap: 8px;
+      padding: 8px 0;
+      border-bottom: 1px solid var(--rule);
+      cursor: pointer;
+      transition: opacity .12s;
+    }
+    .layer-toggle:last-child { border-bottom: none; }
+    .layer-toggle:hover { opacity: .7; }
+    .layer-toggle.off { opacity: .35; }
+    .layer-swatch {
+      width: 10px; height: 10px; flex-shrink: 0; border-radius: 50%;
+    }
+    .lihtc-swatch { background: transparent; border: 1.5px solid var(--ink); box-shadow: none; }
+    .clt-swatch {
+      background: #2a6096;
+      border-radius: 0;
+      width: 10px; height: 10px;
+      clip-path: polygon(50% 0%, 0% 100%, 100% 100%);
+      box-shadow: none;
+    }
+    .layer-name { font-size: 11px; flex: 1; }
+    .layer-badge { font-size: 9px; color: var(--muted); letter-spacing: .06em; }
+  </style>
+</head>
+<body>
+
+<div class="shell">
+
+  <header>
+    <div class="brand">Affordable Housing <em>·</em> Montgomery County</div>
+    <div class="meta" id="count">Loading…</div>
+  </header>
+
+  <aside>
+
+    <!-- Stats -->
+    <div class="sidebar-section" style="padding:0;">
+      <div class="stats-strip">
+        <div class="stat">
+          <div class="stat-value" id="stat-props">—</div>
+          <div class="stat-label">Projects</div>
+        </div>
+        <div class="stat">
+          <div class="stat-value" id="stat-loan">—</div>
+          <div class="stat-label">Total Loans</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Status breakdown
+    <div class="sidebar-section">
+      <div class="sidebar-label">Geocoding Status</div>
+      <div class="pop-chart" id="status-chart"></div>
+    </div>
+    -->
+
+    <!-- Use of funds breakdown -->
+    <div class="sidebar-section">
+      <div class="sidebar-label">Use of Funds</div>
+      <div class="pop-chart" id="use-chart"></div>
+    </div>
+
+    <!-- Affordable Unit Size Distribution -->
+    <div class="sidebar-section">
+      <div class="sidebar-label">Project Size Distribution</div>
+      <div class="pop-chart" id="unit-bucket-chart"></div>
+    </div>
+
+  </aside>
+
+  <div id="loading">
+    <div class="spinner"></div>
+    <div class="loading-label">Loading projects…</div>
+  </div>
+  <div id="error-banner"></div>
+
+  <div id="map"></div>
+
+  <footer>
+    <span>Montgomery County affordable housing projects · Census Geocoder · © OpenStreetMap contributors</span>
+    <span id="zoom-badge">Z —</span>
+  </footer>
+
+</div>
+
+<script>
+  // ── Project data (embedded from geocoded CSV) ────────────────────────────────
+  const PROJECTS = [{"name":"Deauville Apartments (Permanent Acquisition Financing)","address":"7520 Maple Avenue, Takoma Park, MD 20912","lat":38.982206,"lng":-77.008402,"status":"Census Exact","developer":"Deauville Property, LLC","use":"Repayment of the 2025 CIP Acquisition loan/ Preservation","units":"101 total units: 39 1-br, 36 2-br, 26 3-br","affordability":"83 affordable units: 21 at 50% of AMI, 51 at 60% of AMI, 11 at 70% of AMI","special":"","loan":"$10,100,000.00","pilot":"PILOT (By-Right) pending ($85,189)","source":"NPF","closed":"February 4, 2026","notes":"Partial repayment of a 2025 CIP bridge loan from NPF, leaving a balance of $2,881,811 of the CIP loan (original $12,981,811) and establishing a $10,100,000 loan in the NPF"},{"name":"HUI Permanent Finance","address":"Scattered Site","lat":39.0996,"lng":-77.2513,"status":"Unmappable - county centroid","developer":"Housing Unlimited Inc","use":"Preservation","units":"3 total units","affordability":"3 affordable units","special":"For people undergoing mental health recovery","loan":"$464,329.00","pilot":"","source":"HOME","closed":"February 12, 2026","notes":""},{"name":"Bethany House","address":"199 Rollins Ave, Rockville, Maryland 20852","lat":39.058543,"lng":-77.126337,"status":"Census Exact","developer":"Christian Church Facilities for the Aging, Inc. (Note: MHP assumed control of the organization.)","use":"Acquisition/ Preservation","units":"250 total units: 132 Studio, 113 1-br, 5 2-br,","affordability":"227 affordable units: 50 at 50% of AMI, 152 at 60% of AMI, 25 at MPDU level for High-rise Apartments","special":"Senior","loan":"$8,247,464.00","pilot":"","source":"NPF","closed":"July 25, 2025","notes":""},{"name":"8727 Colesville Road","address":"8727 Colesville Road, Silver Spring, MD 20910","lat":38.998011,"lng":-77.026724,"status":"Census Exact","developer":"8727 Colesville Owner LP","use":"Rehabilitation/Conversion/ Production","units":"227 total units: 145 Studio, 81 1-br, and 1 2-br","affordability":"114 affordable units:114 at 60% of AMI","special":"","loan":"","pilot":"$225,000 for FY25","source":"PILOT (Conversion)","closed":"August 25, 2025","notes":""},{"name":"RHE Scarborough Square (Permanent Acquisition Financing)","address":"438 College Parkway Rockville, MD 20850","lat":39.101884,"lng":-77.158996,"status":"Census Exact","developer":"Rockville Housing Enterprises","use":"Permanent Acquisition Financing / Preservation","units":"121 total units: 12 1-br, 36 2-br, 63 3-br, 10 4-br","affordability":"121 affordable units: 30 at 50% of AMI, 91 at 60% of AMI","special":"","loan":"$16,000,000.00","pilot":"$274,987.00","source":"NPF, HOME, PILOT (By-Right)","closed":"September 19, 2025","notes":"Interim/ Permanent Acquisition Financing"},{"name":"HUI-Scattered Sites","address":"Scattered Site","lat":39.0996,"lng":-77.2513,"status":"Unmappable - county centroid","developer":"Housing Unlimited, Inc (HUI)","use":"Preservation","units":"264 units","affordability":"264 affordable units: all at 50% of AMI","special":"For people undergoing mental health recovery","loan":"$1,020,000.00","pilot":"","source":"HIF-Rental Assistance Program","closed":"October 30, 2025","notes":""},{"name":"NOBE II","address":"11426-11428 Rockville Pike, North Bethesda, MD 20852","lat":39.044638,"lng":-77.111916,"status":"Census Exact","developer":"SCG Development Partners, LLC","use":"New Construction/ Production","units":"268 total Units: 48 studio, 135 1-br, 71 2-br, 7 3-br, 7 4-br","affordability":"265 affordable units: 18 at 30% of AMI, 18 at 40% of AMI, 32 at 50% of AMI, 161 at 60% of AMI, 39 at 70% of AMI","special":"","loan":"$38,000,000.00","pilot":"$402,000.00","source":"HIF-CIP, PILOT (Standard)","closed":"December 3, 2025","notes":""},{"name":"The Premier","address":"8711 Georgia Avenue, Silver Spring, MD 20910","lat":38.997722,"lng":-77.029835,"status":"Census Exact","developer":"8711 Investors LLC","use":"Production/ Preservation","units":"160 total Units: 20 studio, 117 1-br, and 23 2-br,","affordability":"100 affordable units: 80 at 60% of AMI, 20 at 80% of AMI","special":"","loan":"","pilot":"$398,627.00","source":"PILOT (By-Right)","closed":"December 1, 2025","notes":""},{"name":"RHE David Scull Apartment","address":"1200 \u2013 1327 First Street Rockville, MD 20850","lat":39.094566,"lng":-77.134623,"status":"Census Exact","developer":"Rockville Housing Enterprises","use":"Rehabilitation/ Preservation of public housing","units":"76 total units: 8 1-br, 14 2-br, 40 3-br, 14 4-br","affordability":"76 affordable units: all at 50% of AMI or less \u2013 Public Housing","special":"","loan":"$875,000.00","pilot":"","source":"CDBG","closed":"December 19, 2025","notes":""},{"name":"The Lindley (HOC)","address":"8405 Chavy Chase Lake, Chevy Chase, MD 20815","lat":38.994599,"lng":-77.075271,"status":"Manual lookup","developer":"Housing Opportunities Commission (HOC)","use":"Preservation","units":"200 total units: 107 1-br, 78 2-br, 15 3-br","affordability":"60 affordable units: 40 at 50% of AMI, 20 at 70% of AMI","special":"","loan":"$6,100,000.00","pilot":"","source":"NPF","closed":"December 29, 2025","notes":""},{"name":"Habitat for Humanity \u2013 Project 3","address":"Multiple Addresses in Gaithersburg","lat":39.0996,"lng":-77.2513,"status":"Unmappable - county centroid","developer":"Habitat for Humanity of Metro Maryland","use":"Acquisition/ Production","units":"10 \u20133-br townhouses","affordability":"10 affordable units will serve households at or below 80% of AMI, with at least 20% of the total units serving households at 50% of AMI.","special":"","loan":"$970,000.00","pilot":"","source":"CDBG","closed":"April, 2026","notes":""},{"name":"Seabury at Springvale Terrace","address":"8505 Springvale Terrace, Silver Spring, MD 20910","lat":38.998664,"lng":-77.021229,"status":"Manual lookup (confirmed)","developer":"Seabury Resources for Aging","use":"New Construction/ Production","units":"237 total units","affordability":"185 affordable units: At least 23 units at 30% of AMI, 84 units at 50% of AMI, and 78 units at 60% of AMI. An additional 52 units will be preserved at 80% of AMI.","special":"Senior","loan":"$30,900,000.00","pilot":"","source":"HIF-CIP","closed":"April 2026","notes":"The Springvale Terrace site will be redeveloped into new senior housing, replacing the existing facility. The property has an existing loan of $5.7 million."},{"name":"Hampshire Village","address":"3210 Norbeck Road, Silver Spring, MD 20906","lat":39.112371,"lng":-77.064783,"status":"Census Exact","developer":"Victory Hampshire Preservation LLC","use":"Preservation","units":"111 total units","affordability":"110 affordable units: 22 units at 30% of AMI, and 88 units at 50% of AMI","special":"Senior","loan":"$5,000,000.00","pilot":"","source":"HIF","closed":"June 2026","notes":"The project is the recapitalization of this property."},{"name":"The Argyle Apartments - ROFR","address":"100-102 East Argyre Street, Rockville, MD 20850","lat":39.077949,"lng":-77.151496,"status":"Census Exact","developer":"Yoke Management, LLC \u2013 ROFR Qualified Entity","use":"Preservation","units":"22 total units: 16 1-br, and 6 2-br","affordability":"12 affordable units","special":"","loan":"$6,000,000.00","pilot":"","source":"TBD","closed":"April 2026","notes":"The project is the first ROFR rights assignment to a qualified entity to preserve location advantageous, affordable units."},{"name":"Tilbury Gardens Apartments - ROFR","address":"7806 Tilbury Street, Bethesda, MD 20814","lat":38.988844,"lng":-77.093774,"status":"Census Exact","developer":"Yoke Management, LLC \u2013 ROFR Qualified Entity","use":"Preservation","units":"30 total units: 30 1-br","affordability":"12 affordable units","special":"","loan":"$3,956,000.00","pilot":"","source":"TBD","closed":"March/April 2026","notes":"The project is the second ROFR rights assignment to a qualified entity to preserve these units. Residents requested that DHCA assign its ROFR to the developer."},{"name":"The Metropolitan (HOC)","address":"7620 Old Georgetown Rd, Bethesda, MD 20814","lat":38.98602,"lng":-77.096483,"status":"Census Exact","developer":"Housing Opportunities Commission (HOC)","use":"Preservation","units":"308 total units: 36 efficiencies, 156 1-br, 102 2-br, 14 3-br","affordability":"92 affordable units: 17 at 25% of AMI, 23 at 30% of AMI, 32 at 40% of AMI, 20 at 50% of AMI","special":"","loan":"$15,000,000.00","pilot":"","source":"HIF-CIP","closed":"May/June 2026","notes":"The project is the recapitalization of the LIHTC property in downtown Bethesda."},{"name":"Elme Germantown","address":"2 Observation Court, Germantown, MD, 20876","lat":39.192259,"lng":-77.247444,"status":"Census Exact","developer":"The NHP Foundation","use":"Production","units":"218 total units","affordability":"109 affordable units: 60% of AMI","special":"","loan":"TBD","pilot":"","source":"PILOT (By-Right) requested","closed":"FY26","notes":"PILOT request being reviewed"},{"name":"The Grand - ROFR","address":"5801 Nicholson Lane, Rockville, MD 20852","lat":39.044696,"lng":-77.113528,"status":"Census Exact","developer":"Wisconsin Park Associates Limited Partnership","use":"Preservation+ Production","units":"552 total units","affordability":"138 affordable units: 110 units at 50% AMI, 28 units at 60% AMI","special":"","loan":"$27,000,000.00","pilot":"$213,900.00","source":"HIF + HIF-CIP + PILOT (Standard)","closed":"March/April 2026","notes":"The project is the preservation of 110 LIHTC units and the addition of 28 affordable units in this market-rate property in North Bethesda."},{"name":"Burnt Mills","address":"10701 Venetia Mill Circle, Silver Spring, MD 20901","lat":39.031515,"lng":-77.002262,"status":"Census Exact","developer":"Burnt Mill Crossing LLC","use":"Preservation","units":"136 total units: 96 2-br, 40 3-br","affordability":"104 affordable units: 8 at 50% of AMI, 96 at 60% of AMI","special":"","loan":"$358,706.00","pilot":"$160,912.00","source":"HIF \u2013 Rental Assistance Program + PILOT","closed":"FY26","notes":"Extension of the rental agreement and PILOT to preserve 104 affordable units."},{"name":"HUI (Acquisition)","address":"Scattered Site","lat":39.0996,"lng":-77.2513,"status":"Unmappable - county centroid","developer":"Housing Unlimited Inc","use":"Production","units":"20 total units","affordability":"14 affordable units","special":"Special Needs","loan":"$1,209,059.00","pilot":"","source":"HOME","closed":"FY26","notes":"Project continues the support of HUI to acquire housing for the special needs\u2019 population."},{"name":"Cinnamon Run \u2013 ROFR","address":"14120 Weeping Willow Drive, Silver Spring, MD 20906","lat":39.087989,"lng":-77.067456,"status":"Census Exact","developer":"Entities Sponsored by Harbor Group International, LLC","use":"Preservation","units":"1,392 total units","affordability":"696 affordable units: all at 60% of AMI","special":"","loan":"","pilot":"$3,000,000.00","source":"PILOT (By-Right) requested","closed":"FY26","notes":"PILOT request being reviewed"},{"name":"Whitney","address":"7707 Wisconsin Ave, Bethesda, MD 20814","lat":38.986894,"lng":-77.094656,"status":"Census Exact","developer":"Bozzuto","use":"Preservation","units":"67 total units","affordability":"10 affordable units","special":"","loan":"","pilot":"","source":"HIF-Rental Assistance Program","closed":"FY26","notes":""},{"name":"Parks at Kingsview","address":"13414 Daventry Way, Germantown, MD 20874","lat":39.156935,"lng":-77.278852,"status":"Census Exact","developer":"PKV PROPERTY CORP.","use":"Preservation","units":"326 total units","affordability":"41 affordable units: 17 1-br, 15 2-br, and 9 3-br.","special":"","loan":"","pilot":"PILOT (Standard) annual estimated value $63,550","source":"HIF-Rental Assistance program + PILOT","closed":"FY26","notes":""},{"name":"Yorkshire Apartment","address":"11401 July Drive, Silver Spring, MD, 20904","lat":39.041566,"lng":-76.981667,"status":"Census Non_Exact","developer":"Wisconsin Park Associates Limited Partnership","use":"Production","units":"326 total units","affordability":"163 affordable units","special":"","loan":"TBD","pilot":"TBD","source":"PILOT (By-Right) requested","closed":"FY26","notes":"PILOT request being reviewed"},{"name":"Rollingwood Apartments","address":"2535 Rose Road, Silver Spring, MD 20910","lat":38.995633,"lng":-77.053823,"status":"Manual lookup","developer":"MRK & MHP","use":"Permanent Financing for property acquired in 2023/ Preservation","units":"283 total units: 19 studios, 40 1-br, 163 2-br, 61 3-br","affordability":"283 affordable units: all at 70% of AMI","special":"","loan":"$23,000,000.00","pilot":"","source":"HIF-CIP + HOME","closed":"FY26","notes":""},{"name":"7201 Wisconsin Avenue","address":"7201 Wisconsin Ave, Bethesda, MD 20814","lat":38.981343,"lng":-77.092658,"status":"Census Exact","developer":"7201 Wisconsin JV, LLC","use":"Demolish the existing office Building and develop a high-rise multi-family housing building","units":"430 total units","affordability":"76 affordable units: all at 60% of AMI","special":"","loan":"PILOT","pilot":"","source":"PILOT (Conversion)","closed":"FY26","notes":""},{"name":"HUI Permanent Finance","address":"Scattered Site","lat":39.0996,"lng":-77.2513,"status":"Unmappable - county centroid","developer":"Housing Unlimited Inc","use":"Preservation","units":"3 total units","affordability":"3 affordable units","special":"Special Needs","loan":"$422,256.00","pilot":"","source":"HOME","closed":"FY26","notes":"Project continues the support of HUI to acquire housing for the special needs\u2019 population."},{"name":"Mapleview Apartment - ROFR","address":"7710 Maple Avenue, Takoma Park, MD 20912","lat":38.984297,"lng":-77.004674,"status":"Census Exact","developer":"Maple View LLC","use":"Preservation","units":"120 total units","affordability":"61 affordable units","special":"","loan":"$9,900,000.00","pilot":"TBD","source":"NPF + PILOT (By-Right)","closed":"FY26","notes":"Preservation of affordable units in Takoma Park"},{"name":"Wheaton Gateway (HOC)","address":"Wheaton, Silver Spring, MD","lat":39.0421,"lng":-77.0525,"status":"Fallback-CityCentroid","developer":"Housing Opportunities Commission (HOC)","use":"New Construction/ Production","units":"427 total units: 2 Efficiencies, 288 1-br, 108 2-br, 20 3-br, 9 4-br","affordability":"204 affordable units (MPDUs); 32 units at 40% of AMI, 56 units at 50% of AMI, 61 units at 60% of AMI, 55 units at 70% of AMI","special":"","loan":"$20,000,000.00","pilot":"","source":"HIF-CIP","closed":"FY27","notes":""},{"name":"Metropointe (HOC)","address":"11175 Georgia Ave, Wheaton, MD 20902","lat":39.038343,"lng":-77.050638,"status":"Census Exact","developer":"Housing Opportunities Commission (HOC)","use":"Preservation","units":"173 total units","affordability":"120 affordable units: 18 at 30% of AMI, 30 at 50% of AMI and 67 at 65% of AMI","special":"","loan":"$14,296,564.00","pilot":"","source":"HIF","closed":"FY27","notes":""},{"name":"Amherst Square 1","address":"11440 Amherst Avenue, Wheaton, MD 20902","lat":39.042525,"lng":-77.048024,"status":"Census Exact","developer":"Montgomery Housing Partnership (MHP)","use":"New Construction/ Production","units":"173 Units","affordability":"173 affordable units","special":"","loan":"$29,800,000.00","pilot":"","source":"HIF-CIP + PILOT","closed":"July 2026","notes":"4% and 9% LIHTC. Mixed-use building that will contain the County-owned Wheaton Arts and Cultural Center."},{"name":"Amherst Square 2","address":"11440 Amherst Avenue, Wheaton, MD 20902","lat":39.042525,"lng":-77.048024,"status":"Census Exact","developer":"Montgomery Housing Partnership (MHP)","use":"New Construction/ Production","units":"99 Units: 6 efficiencies, 38 1-br, 55 2-br","affordability":"99 affordable units: all at 60% of AMI","special":"","loan":"$16,780,000.00","pilot":"","source":"HIF-CIP","closed":"October 2026","notes":"4% LIHTC. Mixed-use building located on the same site as the Amherst Square 1 project."},{"name":"Habitat for Humanity \u2013 Project 4","address":"Multiple Addresses","lat":39.0996,"lng":-77.2513,"status":"Unmappable - county centroid","developer":"Habitat for Humanity of Metro Maryland","use":"Acquisition/ Production","units":"70 Total units","affordability":"70 affordable units will serve households at or below 80% of AMI, with at least 20% of the total units serving households at 50% of AMI.","special":"","loan":"$5,250,000.00","pilot":"","source":"CDBG","closed":"FY27","notes":""},{"name":"Silver Spring United Methodist Church","address":"8900 Georgia Ave, Silver Spring, MD 20910","lat":39.001327,"lng":-77.034371,"status":"Manual lookup","developer":"Enterprise Community Development Inc.","use":"New Construction/ Production","units":"135 total units: 29 efficiencies, 74 1-br, 20 2-br, 6 3-br, 6 4-br","affordability":"123 affordable units: 21 at 30% of AMI, 102 at 60% of AMI. An additional 12 units at 80% of AMI","special":"","loan":"$17,500,000.00","pilot":"","source":"HIF-CIP","closed":"FY27","notes":"4% and 9% LIHTC"},{"name":"Tevis Place","address":"11800 Nebel Street, Rockville, MD 20852","lat":39.049247,"lng":-77.107075,"status":"Census Exact","developer":"TM Associates Development Inc","use":"New Construction/ Production","units":"150 total units: 30 1-br, 75 2-br, 30 3-br, 15 4-br","affordability":"150 affordable units","special":"","loan":"$15,000,000.00","pilot":"","source":"HIF","closed":"October 2026","notes":"4% and 9% LIHTC. Tevis Place has allocated 100% of the units as MPDUs, ensuring affordability for the next 99 years."},{"name":"Twinbrook Place","address":"12501 Ardennes Avenue, Rockville, MD 20851","lat":39.063783,"lng":-77.116163,"status":"Census Exact","developer":"TM Associates Development Inc","use":"New Construction/ Production","units":"125 total units","affordability":"125 affordable units","special":"","loan":"$10,625,000.00","pilot":"","source":"HIF","closed":"FY27","notes":""},{"name":"Sanctuary at Takoma Park","address":"Takoma Park, MD","lat":38.9817,"lng":-77.0075,"status":"Fallback-CityCentroid","developer":"Sanctuary at Takoma Park","use":"New construction/ Production","units":"78 total units; bedroom count TBD","affordability":"78 affordable units","special":"Senior","loan":"$5,000,000.00","pilot":"","source":"HIF-CIP","closed":"FY27","notes":""},{"name":"Atrium Lofts","address":"701 Russell Avenue, Gaithersburg, MD 20877","lat":39.151098,"lng":-77.206246,"status":"Census Exact","developer":"Potomac Housing Development","use":"New construction/ Production","units":"250 Affordable Units","affordability":"250 Affordable Units","special":"","loan":"$18,600,000.00","pilot":"","source":"HIF-CIP","closed":"FY27","notes":"Part of Lakeforest Mall redevelopment. The project is applying to the State for 9% and 4% LIHTC."},{"name":"Sandy Spring Missing Middle (HOC)","address":"Sandy Spring, MD","lat":39.1454,"lng":-77.0119,"status":"Fallback-CityCentroid","developer":"Housing Opportunities Commission (HOC)","use":"New construction/ Production","units":"18 total units (The units include duplex, triplex, and quadplex configurations)","affordability":"18 affordable units: 55-70 percent of AMI","special":"","loan":"$1,300,000.00","pilot":"","source":"HIF-CIP","closed":"FY27","notes":"An infill residential development with 18 new homes on just over an acre of land in partnership with MD DHCD."},{"name":"Hampshire Towers","address":"7401 New Hampshire Ave, Takoma Park, MD 20912","lat":38.983382,"lng":-76.988253,"status":"Census Exact","developer":"Orlo, Inc","use":"Preservation/ Rehabilitation","units":"216 total units","affordability":"216 affordable units: all at 60% of AMI","special":"","loan":"$12,000,000.00","pilot":"","source":"HIF-CIP","closed":"FY27","notes":""},{"name":"Garnkirk Farms Apartments (HOC)","address":"Clarksburg, MD 20852","lat":39.2376,"lng":-77.2692,"status":"Fallback-CityCentroid","developer":"Housing Opportunities Commission (HOC)","use":"New Construction/ Production","units":"184 total units: 19 efficiencies, 56 1-br, 56 2-br, 53 3-br","affordability":"184 affordable units: 15 at 40% of AMI, 15 at 50% of AMI, 73 at 60% of AMI, 71 at 65% of AMI","special":"","loan":"$30,143,156.00","pilot":"TBD","source":"HIF-CIP + PILOT (By-Right)","closed":"FY28","notes":""},{"name":"Strathmore Square Lot 2","address":"Grosvenor-Strathmore Metro Station, Lot 2, North Bethesda, MD 20852","lat":39.0455,"lng":-77.1073,"status":"Fallback-LandmarkCoords","developer":"Enterprise Community Development, Inc.","use":"New Construction/ Production","units":"398 total units","affordability":"100 affordable units: at 50% to 70% AMI","special":"","loan":"$10,000,000.00","pilot":"","source":"HIF","closed":"FY28","notes":""},{"name":"Victory Station","address":"530 Stone Street, Rockville, MD 20850","lat":39.090485,"lng":-77.150097,"status":"Manual lookup (530 N Stonestreet Ave)","developer":"Victory Housing Inc","use":"New Construction/ Production","units":"105 total units","affordability":"101 affordable units: 101 at 30% and 60% of AMI, and 4 units at 80% and 100% AMI","special":"","loan":"$28,000,000.00","pilot":"","source":"HIF-CIP","closed":"July 2027","notes":""}];
+  // Montgomery County, MD centroid (used as fallback for unmappable rows)
+  const COUNTY_CENTROID = [39.0996, -77.2513];
+
+  // ── Map ──────────────────────────────────────────────────────────────────────
+  // Center on Montgomery County, MD
+  const map = L.map('map', {
+    center: [39.15, -77.20], zoom: 11,
+    zoomControl: false, attributionControl: false,
+  });
+  L.tileLayer('https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', { maxZoom: 19 }).addTo(map);
+  L.control.zoom({ position: 'bottomright' }).addTo(map);
+  map.on('zoomend', () => {
+    document.getElementById('zoom-badge').textContent = `Z ${map.getZoom()}`;
+  });
+  document.getElementById('zoom-badge').textContent = `Z ${map.getZoom()}`;
+
+  // ── Marker layer ─────────────────────────────────────────────────────────────
+  const markerGroup = L.layerGroup().addTo(map);
+
+  // ── Helpers ──────────────────────────────────────────────────────────────────
+  function escapeHtml(s) {
+    return String(s ?? '').replace(/[&<>\"']/g, c => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;', "'": '&#39;',
+    }[c]));
+  }
+
+  function popupHtml(p) {
+    const row = (label, value) => {
+      const v = (value ?? '').toString().trim();
+      if (!v || v.toLowerCase() === 'n/a') return '';
+      return `<div class="popup-row"><span>${label}</span><span>${escapeHtml(v)}</span></div>`;
+    };
+    const fallback = p.status && p.status.toLowerCase().includes('centroid')
+      ? `<div class="popup-tags"><span class="popup-tag">approx. location</span></div>`
+      : '';
+    return `
+      <div class="popup-inner">
+        <div class="popup-name">${escapeHtml(p.name || 'Unnamed Project')}</div>
+        ${row('Address',       p.address)}
+        ${row('Developer',     p.developer)}
+        ${row('Use of Funds',  p.use)}
+        ${row('Unit Mix',      p.units)}
+        ${row('Affordability', p.affordability)}
+        ${row('Special Needs', p.special)}
+        ${row('Loan Amount',   p.loan)}
+        ${row('PILOT',         p.pilot)}
+        ${row('Source',        p.source)}
+        ${row('Loan Closed',   p.closed)}
+        ${row('Notes',         p.notes)}
+        ${fallback}
+      </div>`;
+  }
+
+  // ── Jitter overlapping points ────────────────────────────────────────────────
+  // Many projects share the same county-centroid coordinate. Spread them in a
+  // small ring so each remains clickable. Pure visual; the underlying data is
+  // unchanged.
+  function jitterPositions(projects) {
+    const groups = new Map();
+    projects.forEach((p, i) => {
+      const key = `${p.lat.toFixed(4)},${p.lng.toFixed(4)}`;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(i);
+    });
+    const positions = projects.map(p => [p.lat, p.lng]);
+    groups.forEach(indices => {
+      if (indices.length < 2) return;
+      const radius = 0.004; // ~450 m
+      indices.forEach((idx, k) => {
+        const angle = (k / indices.length) * 2 * Math.PI;
+        positions[idx] = [
+          projects[idx].lat + radius * Math.cos(angle),
+          projects[idx].lng + radius * Math.sin(angle),
+        ];
+      });
+    });
+    return positions;
+  }
+
+  // ── Render markers as simple black dots ──────────────────────────────────────
+  function renderMarkers(projects) {
+    markerGroup.clearLayers();
+    const positions = jitterPositions(projects);
+    projects.forEach((p, i) => {
+      const [lat, lng] = positions[i];
+      L.circleMarker([lat, lng], {
+        radius:      5,
+        color:       '',
+        weight:      1,
+        fillColor:   '#a4a5e7',
+        fillOpacity: 1,
+      })
+        .bindPopup(popupHtml(p), { maxWidth: 300, closeButton: true })
+        .addTo(markerGroup);
+    });
+
+    // Header count
+    document.getElementById('count').textContent =
+      `${projects.length.toLocaleString()} projects`;
+
+    // Stats: count + total loan amount (parsed from currency strings)
+    const totalLoan = projects.reduce((sum, p) => {
+      const m = (p.loan || '').match(/[\d,.]+/);
+      if (!m) return sum;
+      const n = parseFloat(m[0].replace(/,/g, ''));
+      return Number.isFinite(n) ? sum + n : sum;
+    }, 0);
+    document.getElementById('stat-props').textContent = projects.length.toLocaleString();
+    document.getElementById('stat-loan').textContent  =
+      totalLoan > 0 ? '$' + (totalLoan / 1e6).toFixed(0) + 'M' : '—';
+
+    renderStatusChart(projects);
+    renderUseChart(projects);
+    renderAffordableUnitBuckets(projects);
+  }
+
+  // ── Sidebar charts ───────────────────────────────────────────────────────────
+  function renderBarChart(elId, items) {
+    const el = document.getElementById(elId);
+    if (!el) return;
+    el.innerHTML = '';
+    const total = items.reduce((s, it) => s + it.n, 0);
+    if (total === 0) {
+      el.innerHTML = '<div class="pop-none">No data</div>';
+      return;
+    }
+    items.sort((a, b) => b.n - a.n);
+    items.forEach(({ label, n, color }) => {
+      if (n === 0) return;
+      const pct = (n / total) * 100;
+      const row = document.createElement('div');
+      row.className = 'pop-row';
+      row.innerHTML = `
+        <div class="pop-header">
+          <div style="display:flex;align-items:center;gap:5px;">
+            <div style="width:7px;height:7px;border-radius:50%;background:${color};box-shadow:0 0 0 1px ${color};flex-shrink:0;"></div>
+            <span class="pop-name">${escapeHtml(label)}</span>
+          </div>
+          <span class="pop-pct">${pct.toFixed(0)}% · ${n}</span>
+        </div>
+        <div class="pop-track">
+          <div class="pop-fill" style="width:0%;background:${color};"></div>
+        </div>`;
+      el.appendChild(row);
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        row.querySelector('.pop-fill').style.width = `${pct}%`;
+      }));
+    });
+  }
+
+  function renderStatusChart(projects) {
+    // Collapse the various statuses into three buckets
+    const buckets = {
+      'Geocoded':    { n: 0, color: '#1a1a18' },
+      'Manual':      { n: 0, color: '#8a8880' },
+      'Approximate': { n: 0, color: '#b85c38' },
+    };
+    projects.forEach(p => {
+      const s = (p.status || '').toLowerCase();
+      if (s.includes('centroid'))      buckets['Approximate'].n += 1;
+      else if (s.includes('manual'))   buckets['Manual'].n      += 1;
+      else                             buckets['Geocoded'].n    += 1;
+    });
+    const items = Object.entries(buckets).map(([label, v]) => ({ label, ...v }));
+    renderBarChart('status-chart', items);
+  }
+
+  function renderUseChart(projects) {
+    const counts = new Map();
+    projects.forEach(p => {
+      let use = (p.use || '').trim();
+      if (!use) use = '—';
+      counts.set(use, (counts.get(use) || 0) + 1);
+    });
+    const palette = ['#1a1a18','#b85c38','#2a6096','#2e8b6e','#6b4c9a','#8a8880','#c4b8a0','#a06820'];
+    const items = Array.from(counts.entries()).map(([label, n], i) => ({
+      label, n, color: palette[i % palette.length],
+    }));
+    renderBarChart('use-chart', items);
+  }
+
+  function renderAffordableUnitBuckets(projects) {
+  // Define your buckets and their labels
+  const buckets = [
+    { label: '1–50 Units',      min: 1,   max: 50 },
+    { label: '51–100 Units',    min: 51,  max: 100 },
+    { label: '101–200 Units',   min: 101, max: 200 },
+    { label: '201–400 Units',   min: 201, max: 400 },
+    { label: '401+ Units',      min: 401, max: Infinity }
+  ];
+
+  // Initialize counts for each bucket
+  const counts = buckets.map(b => ({ ...b, n: 0 }));
+  
+  const affordabilityRegex = /(\d+)/;
+
+  // Iterate over projects and assign to buckets
+  projects.forEach(p => {
+    const rawText = p.affordability || '';
+    const match = rawText.match(affordabilityRegex);
+    const count = match ? parseInt(match[1], 10) : 0;
+
+    if (count > 0) {
+      const bucket = counts.find(b => count >= b.min && count <= b.max);
+      if (bucket) {
+        bucket.n += 1;
+      }
+    }
+  });
+
+  // Filter out empty buckets to keep the chart clean
+  const items = counts.filter(b => b.n > 0).map(({ label, n, min, max }) => ({
+    label,
+    n,
+    color: '#b85c38' // Your accent color, or you can map colors here
+  }));
+
+  // Render to the specific element ID
+  renderBarChart('unit-bucket-chart', items);
+}
+
+  // ── Init ─────────────────────────────────────────────────────────────────────
+  (() => {
+    const loadingEl = document.getElementById('loading');
+    const errorEl   = document.getElementById('error-banner');
+    try {
+      renderMarkers(PROJECTS);
+      loadingEl.classList.add('hidden');
+      setTimeout(() => loadingEl.style.display = 'none', 400);
+    } catch (err) {
+      loadingEl.style.display = 'none';
+      document.getElementById('count').textContent = 'Error';
+      errorEl.textContent = err.message;
+      errorEl.style.display = 'block';
+      console.error(err);
+    }
+  })();
+</script>
+</body>
+</html>
